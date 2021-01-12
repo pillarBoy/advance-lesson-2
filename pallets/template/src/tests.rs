@@ -1,6 +1,11 @@
 use crate::{Error, mock::*};
 use frame_support::{assert_ok, assert_noop};
 
+mod kitties {
+	// Re-export needed for `impl_outer_event!`.
+	pub use super::super::*;
+}
+
 #[test]
 fn it_works_for_default_value() {
 	new_test_ext().execute_with(|| {
