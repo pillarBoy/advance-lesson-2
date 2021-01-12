@@ -5,10 +5,10 @@ use frame_support::{
     Parameter, RuntimeDebug, StorageDoubleMap, StorageValue, 
     decl_error, decl_event, decl_module, decl_storage, 
     dispatch::{ DispatchError, DispatchResult }, ensure, 
-    traits::{ LockableCurrency, Randomness, WithdrawReasons },
+    traits::{ Currency, ExistenceRequirement::AllowDeath, ReservableCurrency, Randomness },
 };
 use sp_io::hashing::{blake2_128, twox_64};
-use frame_system::ensure_signed;
+use frame_system::{self as system, ensure_signed};
 use sp_runtime::traits::{AtLeast32BitUnsigned, Bounded, One, CheckedAdd};
 use sp_std::prelude::*;
 
@@ -18,18 +18,21 @@ use sp_std::prelude::*;
 #[cfg(test)]
 mod tests;
 
-
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct Kitty(pub [u8; 16]);
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct LockId(pub [u8; 8]);
 
 
+type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as system::Trait>::AccountId>>::Balance;
+
 pub trait Trait: frame_system::Trait {
 	type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
 	type Randomness: Randomness<Self::Hash>;
     type KittyIndex: Parameter + AtLeast32BitUnsigned + Bounded + Default + Copy;
-    type Currency: LockableCurrency<Self::AccountId, Moment=Self::BlockNumber>;
+    // type Currency: LockableCurrency<Self::AccountId, Moment=Self::BlockNumber>;
+
+    type Currency: Currency<Self::AccountId> + ReservableCurrency<Self::AccountId>;
 }
 
 decl_storage! {
@@ -48,11 +51,18 @@ decl_storage! {
 decl_event! {
 	pub enum Event<T> where
 		<T as frame_system::Trait>::AccountId,
-		<T as Trait>::KittyIndex,
+        <T as Trait>::KittyIndex,
+        Balance = BalanceOf<T>,
+        BlockNumber = <T as system::Trait>::BlockNumber,
 	{
 		/// A kitty is created. \[owner, kitty_id, kitty\]
         Created(AccountId, KittyIndex),
         Transfered(AccountId, AccountId, KittyIndex),
+
+        LockFunds(AccountId, Balance, BlockNumber),
+		UnlockFunds(AccountId, Balance, BlockNumber),
+		// sender, dest, amount, block number
+		TransferFunds(AccountId, AccountId, Balance, BlockNumber),
 	}
 }
 
@@ -73,7 +83,7 @@ decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		type Error = Error<T>;
 
-		fn deposit_event() = default;
+        fn deposit_event() = default;
 
         #[weight = 1000]
         pub fn create(origin) -> DispatchResult {
@@ -81,16 +91,14 @@ decl_module! {
 
             let kitty_id = Self::next_kitty_id()?;
 
-            let lockid = Self::random_lock_id(&sender);
-
-            T::Currency::set_lock(lockid.clone(), &sender, 1_000_000_000.into(), WithdrawReasons::all());
-            // KittyLockId::insert(kitty_id, lockid);
-            
             let dna = Self::random_value(&sender);
 
             let kitty = Kitty(dna);
 
             Self::insert_kitty(&sender, kitty_id, kitty)?;
+
+            T::Currency::reserve(&sender, 1_000_000_000_000_000u64.into())
+                .map_err(|_| "locker can't afford to lock the amount requested")?;
 
             Self::deposit_event(RawEvent::Created(sender, kitty_id));
 
