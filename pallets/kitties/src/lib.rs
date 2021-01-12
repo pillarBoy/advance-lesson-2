@@ -2,10 +2,12 @@
 
 use codec::{Encode, Decode};
 use frame_support::{
-	decl_module, decl_storage, decl_event, decl_error, ensure, StorageValue, StorageDoubleMap, Parameter,
-	traits::Randomness, RuntimeDebug, dispatch::{DispatchError, DispatchResult},
+    Parameter, RuntimeDebug, StorageDoubleMap, StorageValue, 
+    decl_error, decl_event, decl_module, decl_storage, 
+    dispatch::{ DispatchError, DispatchResult }, ensure, 
+    traits::{ LockableCurrency, Randomness, WithdrawReasons },
 };
-use sp_io::hashing::blake2_128;
+use sp_io::hashing::{blake2_128, twox_64};
 use frame_system::ensure_signed;
 use sp_runtime::traits::{AtLeast32BitUnsigned, Bounded, One, CheckedAdd};
 use sp_std::prelude::*;
@@ -19,12 +21,15 @@ mod tests;
 
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct Kitty(pub [u8; 16]);
+#[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
+pub struct LockId(pub [u8; 8]);
 
 
 pub trait Trait: frame_system::Trait {
 	type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
 	type Randomness: Randomness<Self::Hash>;
-	type KittyIndex: Parameter + AtLeast32BitUnsigned + Bounded + Default + Copy;
+    type KittyIndex: Parameter + AtLeast32BitUnsigned + Bounded + Default + Copy;
+    type Currency: LockableCurrency<Self::AccountId, Moment=Self::BlockNumber>;
 }
 
 decl_storage! {
@@ -36,6 +41,7 @@ decl_storage! {
         pub KittiesCount get(fn kitties_count): T::KittyIndex;
         pub KittyOwners get(fn kitty_owner): map hasher(blake2_128_concat) T::KittyIndex => Option<T::AccountId>;
         pub AccountKitties get(fn account_kitties): map hasher(blake2_128_concat) T::AccountId => Vec<(T::KittyIndex, Kitty)>;
+        pub KittyLockId get(fn lock_id): map hasher(blake2_128_concat) T::KittyIndex => Option<LockId>;
 	}
 }
 
@@ -69,11 +75,16 @@ decl_module! {
 
 		fn deposit_event() = default;
 
-        #[weight = 0]
+        #[weight = 1000]
         pub fn create(origin) -> DispatchResult {
             let sender = ensure_signed(origin)?;
 
             let kitty_id = Self::next_kitty_id()?;
+
+            let lockid = Self::random_lock_id(&sender);
+
+            T::Currency::set_lock(lockid.clone(), &sender, 1_000_000_000.into(), WithdrawReasons::all());
+            // KittyLockId::insert(kitty_id, lockid);
             
             let dna = Self::random_value(&sender);
 
@@ -141,6 +152,16 @@ impl<T: Trait> Module<T> {
         );
 
         payload.using_encoded(blake2_128)
+    }
+
+    fn random_lock_id(sender: &T::AccountId) -> [u8; 8] {
+        let payload = (
+            T::Randomness::random_seed(),
+            &sender,
+            <frame_system::Module<T>>::extrinsic_index(),
+        );
+
+        payload.using_encoded(twox_64)
     }
 
     fn insert_kitty(owner: &T::AccountId, kitty_id: T::KittyIndex, kitty: Kitty) -> DispatchResult {

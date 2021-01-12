@@ -4,29 +4,61 @@ use std::cell::RefCell;
 use sp_core::H256;
 use frame_support::{
     impl_outer_origin, impl_outer_event, parameter_types, weights::Weight,
-    assert_ok, assert_noop,
+	assert_ok, assert_noop,
+	traits::{Currency, Get,},
 };
 use sp_runtime::{
 	traits::{BlakeTwo256, IdentityLookup}, testing::Header, Perbill,
 };
+use crate::*;
+use pallet_balances as balances;
+
+
 use frame_system as system;
+use pallet_session as session;
+
+
 
 impl_outer_origin! {
 	pub enum Origin for Test {}
 }
+
+pub(crate) type Balance = u128;
+
 
 mod kitties {
 	// Re-export needed for `impl_outer_event!`.
 	pub use super::super::*;
 }
 
+// impl_outer_event! {
+// 	pub enum MetaEvent for Test {
+// 		system<T>,
+// 		balances<T>,
+// 		session,
+// 		kitties<T>,
+// 	}
+// }
+
+pub struct ExistentialDeposit;
+impl Get<Balance> for ExistentialDeposit {
+	fn get() -> Balance {
+		EXISTENTIAL_DEPOSIT.with(|v| *v.borrow())
+	}
+}
+
 impl_outer_event! {
 	pub enum Event for Test {
 		frame_system<T>,
 		kitties<T>,
+		balances<T>,
 	}
 }
 // Configure a mock runtime to test the pallet.
+
+pub type KModule = Module<Test>;
+pub type System = frame_system::Module<Test>;
+pub type Balances = pallet_balances::Module<Test>;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct Test;
@@ -59,14 +91,25 @@ impl system::Trait for Test {
 	type AvailableBlockRatio = AvailableBlockRatio;
 	type Version = ();
 	type PalletInfo = ();
-	type AccountData = ();
+	type AccountData = pallet_balances::AccountData<Balance>;
 	type OnNewAccount = ();
 	type OnKilledAccount = ();
 	type SystemWeightInfo = ();
 }
 
+impl pallet_balances::Trait for Test {
+	type MaxLocks = ();
+	type Balance = Balance;
+	type Event = Event;
+	type DustRemoval = ();
+	type ExistentialDeposit = ExistentialDeposit;
+	type AccountStore = System;
+	type WeightInfo = ();
+}
+
 thread_local! {
-    static RANDOM_PAYLOAD: RefCell<H256> = RefCell::new(Default::default());
+	static RANDOM_PAYLOAD: RefCell<H256> = RefCell::new(Default::default());
+	static EXISTENTIAL_DEPOSIT: RefCell<Balance> = RefCell::new(0);
 }
 
 pub struct MockRandom;
@@ -81,10 +124,11 @@ impl Trait for Test {
 	type Event = Event;
 	type Randomness = MockRandom;
 	type KittyIndex = u32;
+	type Currency = Balances;
+
 }
 
-pub type KModule = Module<Test>;
-pub type System = frame_system::Module<Test>;
+
 
 // Build genesis storage according to the mock runtime.
 pub fn new_test_ext() -> sp_io::TestExternalities {
