@@ -169,10 +169,14 @@ decl_module! {
         }
 
         #[weight = 0]
-        pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex) {
-            let sender = ensure_signed(origin)?;
+        pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex, amount: BalanceOf<T>) {
+            let sender = ensure_signed(origin.clone())?;
 
             let new_kitty_id = Self::do_breed(&sender, kitty_id_1, kitty_id_2)?;
+            // 质押token
+            KittyLockAmount::<T>::insert(&new_kitty_id, amount.clone());
+
+            Self::reserve_funds(origin, sender.clone(), amount)?;
 
             Self::deposit_event(RawEvent::Created(sender, new_kitty_id));
         }
