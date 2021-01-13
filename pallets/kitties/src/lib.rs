@@ -21,10 +21,14 @@ mod tests;
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct Kitty(pub [u8; 16]);
 
+// 感觉这个结构存储的数据有点多，不是很高效
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct KittyNode<T: Trait> {
+    // 自己
     _self: T::KittyIndex,
+    // 父母双方，create的kitty可能是None
     companion: Option<(T::KittyIndex, T::KittyIndex)>,
+    // kitty的children
     children: Vec<T::KittyIndex>,
 }
 
@@ -98,12 +102,10 @@ decl_module! {
         #[weight = 0]
 		pub fn reserve_funds(origin, locker: T::AccountId, amount: BalanceOf<T>) -> DispatchResult {
             let _sender = ensure_signed(origin)?;
-            // 账户可用余额
-            let free_amount = T::Currency::free_balance(&locker);
-            ensure!(free_amount > amount, Error::<T>::BalanceNotEnough);
 
+            // 这里其实已经判断了余额不足的 但是这个Error Event 还没找到怎么发送 BalanceNotEnough
             T::Currency::reserve(&locker, amount)
-                .map_err(|_| "locker can't afford to lock the amount requested")?;
+                .map_err(|_| Error::<T>::BalanceNotEnough)?;
 
             let now = <system::Module<T>>::block_number();
             Self::deposit_event(RawEvent::LockFunds(locker, amount, now));
