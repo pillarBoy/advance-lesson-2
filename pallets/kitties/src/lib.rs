@@ -5,25 +5,21 @@ use frame_support::{
     Parameter, RuntimeDebug, StorageDoubleMap, StorageValue, 
     decl_error, decl_event, decl_module, decl_storage, 
     dispatch::{ DispatchError, DispatchResult }, ensure, 
-    traits::{ Currency, ReservableCurrency, Randomness },
+    traits::{ Currency, ExistenceRequirement::AllowDeath, ReservableCurrency, Randomness },
 };
-use sp_io::hashing::{blake2_128, twox_64};
+use sp_io::hashing::{blake2_128};
 use frame_system::{self as system, ensure_signed};
 use sp_runtime::traits::{AtLeast32BitUnsigned, Bounded, One, CheckedAdd};
 use sp_std::prelude::*;
 
-// #[cfg(test)]
-// mod mock;
+#[cfg(test)]
+mod mock;
 
 #[cfg(test)]
 mod tests;
 
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct Kitty(pub [u8; 16]);
-
-#[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
-pub struct LockId(pub [u8; 8]);
-
 
 type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as system::Trait>::AccountId>>::Balance;
 
@@ -32,13 +28,12 @@ pub trait Trait: frame_system::Trait {
 	type Randomness: Randomness<Self::Hash>;
     type KittyIndex: Parameter + AtLeast32BitUnsigned + Bounded + Default + Copy;
     // type Currency: LockableCurrency<Self::AccountId, Moment=Self::BlockNumber>;
-
     type Currency: Currency<Self::AccountId> + ReservableCurrency<Self::AccountId>;
 }
 
 decl_storage! {
 	trait Store for Module<T: Trait> as Kitties {
-		/// Stores all the kitties, key is the kitty id
+		// kitty账户 kitty id映射
         pub Kitties get(fn kitties): double_map hasher(blake2_128_concat) T::AccountId, hasher(blake2_128_concat) T::KittyIndex => Option<Kitty>;
         // Kitty 总数
         pub KittiesCount get(fn kitties_count): T::KittyIndex;
@@ -46,7 +41,8 @@ decl_storage! {
         pub KittyOwners get(fn kitty_owner): map hasher(blake2_128_concat) T::KittyIndex => Option<T::AccountId>;
         // 某账户所有的Kitty
         pub AccountKitties get(fn account_kitties): map hasher(blake2_128_concat) T::AccountId => Vec<(T::KittyIndex, Kitty)>;
-        pub KittyLockId get(fn lock_id): map hasher(blake2_128_concat) T::KittyIndex => Option<LockId>;
+        // kitty 对应的质押数量
+        pub KittyLockAmount get(fn lock_amount): map hasher(blake2_128_concat) T::KittyIndex => Option<BalanceOf<T>>;
 	}
 }
 
@@ -87,9 +83,9 @@ decl_module! {
 
         fn deposit_event() = default;
 
-        #[weight = 10_000]
-		pub fn reserve_funds(origin, amount: BalanceOf<T>) -> DispatchResult {
-			let locker = ensure_signed(origin)?;
+        #[weight = 0]
+		pub fn reserve_funds(origin, locker: T::AccountId, amount: BalanceOf<T>) -> DispatchResult {
+			let _sender = ensure_signed(origin)?;
 
 			T::Currency::reserve(&locker, amount)
 					.map_err(|_| "locker can't afford to lock the amount requested")?;
@@ -99,18 +95,24 @@ decl_module! {
 			Self::deposit_event(RawEvent::LockFunds(locker, amount, now));
 			Ok(())
 		}
+        
+        #[weight = 10_000]
+		pub fn unreserve_and_transfer(
+			origin,
+			to_punish: T::AccountId,
+			dest: T::AccountId,
+			collateral: BalanceOf<T>
+		) -> DispatchResult {
+			let _ = ensure_signed(origin)?; // dangerous because can be called with any signature (so dont do this in practice ever!)
 
-		/// Unreserves the specified amount of funds from the caller
-		#[weight = 10_000]
-		pub fn unreserve_funds(origin, amount: BalanceOf<T>) -> DispatchResult {
-			let unlocker = ensure_signed(origin)?;
+						// If collateral is bigger than to_punish's reserved_balance, store what's left in overdraft.
+			let overdraft = T::Currency::unreserve(&to_punish, collateral);
 
-			T::Currency::unreserve(&unlocker, amount);
-			// ReservableCurrency::unreserve does not fail (it will lock up as much as amount)
+			T::Currency::transfer(&to_punish, &dest, collateral - overdraft, AllowDeath)?;
 
 			let now = <system::Module<T>>::block_number();
+			Self::deposit_event(RawEvent::TransferFunds(to_punish, dest, collateral - overdraft, now));
 
-			Self::deposit_event(RawEvent::UnlockFunds(unlocker, amount, now));
 			Ok(())
 		}
 
@@ -126,7 +128,9 @@ decl_module! {
 
             Self::insert_kitty(&sender, kitty_id, kitty)?;
 
-            Self::reserve_funds(origin, amount)?;
+            KittyLockAmount::<T>::insert(kitty_id, amount);
+
+            Self::reserve_funds(origin, sender.clone(), amount)?;
 
             Self::deposit_event(RawEvent::Created(sender, kitty_id));
 
@@ -135,10 +139,10 @@ decl_module! {
 
         #[weight = 0]
         pub fn transfer(origin, to: T::AccountId, kitty_id: T::KittyIndex) -> DispatchResult {
-            let sender = ensure_signed(origin)?;
+            let sender = ensure_signed(origin.clone())?;
             let kitty = Kitties::<T>::take(&sender, kitty_id).ok_or(Error::<T>::InvalidaKittyId)?;
 
-            // update accountKitties
+            // 查找到需要转移到那只 kitty 变更 kitty的所有者关系
             let sender_kitty_vec = AccountKitties::<T>::take(&sender);
             let mut to_kitty_vec = AccountKitties::<T>::take(&to);
             let mut new_sender_k_vec = Vec::new();
@@ -151,7 +155,14 @@ decl_module! {
             }
             AccountKitties::<T>::insert(&sender, new_sender_k_vec);
             AccountKitties::<T>::insert(&to, to_kitty_vec);
-            KittyOwners::<T>::insert(kitty_id, to.clone());
+            KittyOwners::<T>::insert(&kitty_id, to.clone());
+
+            // 获取kitty的质押数量
+            let amount = Self::lock_amount(kitty_id).ok_or(Error::<T>::InvalidaKittyId)?;
+            // 解除质押，并转移质押到拥有者账号
+            Self::unreserve_and_transfer(origin.clone(), sender.clone(), to.clone(), amount)?;
+            // 把质押的token 质押到拥有者账号里 (会不会产生在上面解除质押，转移的过程中，toke还没到账，然后账户上没有足够的token去质押的情况呢？也就是，这里是同步的，不是异步执行的吧)
+            Self::reserve_funds(origin, to.clone(), amount)?;
 
             Self::deposit_event(RawEvent::Transfered(sender, to, kitty_id));
             Ok(())
@@ -180,6 +191,7 @@ impl<T: Trait> Module<T> {
         Ok(kitty_id)
     }
 
+    // 随机数
     fn random_value(sender: &T::AccountId) -> [u8;16] {
         let payload = (
             T::Randomness::random_seed(),
@@ -188,16 +200,6 @@ impl<T: Trait> Module<T> {
         );
 
         payload.using_encoded(blake2_128)
-    }
-
-    fn random_lock_id(sender: &T::AccountId) -> [u8; 8] {
-        let payload = (
-            T::Randomness::random_seed(),
-            &sender,
-            <frame_system::Module<T>>::extrinsic_index(),
-        );
-
-        payload.using_encoded(twox_64)
     }
 
     fn insert_kitty(owner: &T::AccountId, kitty_id: T::KittyIndex, kitty: Kitty) -> DispatchResult {
