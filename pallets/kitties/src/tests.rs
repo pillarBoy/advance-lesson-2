@@ -145,7 +145,7 @@ pub fn last_event() -> Event {
 #[test]
 fn can_create_kitty() {
 	new_test_ext().execute_with(|| {
-		assert_ok!(KModule::create(Origin::signed(1)));
+		assert_ok!(KModule::create(Origin::signed(1), 1230));
 		
         let kt = Kitty([39, 140, 77, 194, 163, 1, 154, 220, 108, 18, 30, 32, 100, 223, 46, 1]);
         assert_eq!(KModule::kitties(1, 1), Some(kt.clone()));
@@ -158,7 +158,7 @@ fn can_create_kitty() {
 #[test]
 fn can_transfer() {
     new_test_ext().execute_with(|| {
-        assert_ok!(KModule::create(Origin::signed(1)));
+        assert_ok!(KModule::create(Origin::signed(1), 1230));
 
         assert_eq!(KModule::kitties_count(), 1);
 
@@ -174,8 +174,8 @@ fn can_transfer() {
 #[test]
 fn can_breed() {
 	new_test_ext().execute_with(|| {
-		assert_ok!(KModule::create(Origin::signed(1)));
-		assert_ok!(KModule::create(Origin::signed(1)));
+		assert_ok!(KModule::create(Origin::signed(1), 1230));
+		assert_ok!(KModule::create(Origin::signed(1), 1230));
 
 		assert_noop!(KModule::breed(Origin::signed(1), 0, 3), Error::<Test>::InvalidaKittyId);
 

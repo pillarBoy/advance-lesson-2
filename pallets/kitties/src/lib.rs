@@ -5,7 +5,7 @@ use frame_support::{
     Parameter, RuntimeDebug, StorageDoubleMap, StorageValue, 
     decl_error, decl_event, decl_module, decl_storage, 
     dispatch::{ DispatchError, DispatchResult }, ensure, 
-    traits::{ Currency, ExistenceRequirement::AllowDeath, ReservableCurrency, Randomness },
+    traits::{ Currency, ReservableCurrency, Randomness },
 };
 use sp_io::hashing::{blake2_128, twox_64};
 use frame_system::{self as system, ensure_signed};
@@ -20,6 +20,7 @@ mod tests;
 
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct Kitty(pub [u8; 16]);
+
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct LockId(pub [u8; 8]);
 
@@ -38,11 +39,12 @@ pub trait Trait: frame_system::Trait {
 decl_storage! {
 	trait Store for Module<T: Trait> as Kitties {
 		/// Stores all the kitties, key is the kitty id
-		pub Kitties get(fn kitties): double_map hasher(blake2_128_concat) T::AccountId, hasher(blake2_128_concat) T::KittyIndex => Option<Kitty>;
-		/// Stores the next kitty ID
-        // pub NextKittyId get(fn next_kitty_id): T::KittyIndex;
+        pub Kitties get(fn kitties): double_map hasher(blake2_128_concat) T::AccountId, hasher(blake2_128_concat) T::KittyIndex => Option<Kitty>;
+        // Kitty 总数
         pub KittiesCount get(fn kitties_count): T::KittyIndex;
+        // Kitty拥有者
         pub KittyOwners get(fn kitty_owner): map hasher(blake2_128_concat) T::KittyIndex => Option<T::AccountId>;
+        // 某账户所有的Kitty
         pub AccountKitties get(fn account_kitties): map hasher(blake2_128_concat) T::AccountId => Vec<(T::KittyIndex, Kitty)>;
         pub KittyLockId get(fn lock_id): map hasher(blake2_128_concat) T::KittyIndex => Option<LockId>;
 	}
@@ -85,9 +87,36 @@ decl_module! {
 
         fn deposit_event() = default;
 
+        #[weight = 10_000]
+		pub fn reserve_funds(origin, amount: BalanceOf<T>) -> DispatchResult {
+			let locker = ensure_signed(origin)?;
+
+			T::Currency::reserve(&locker, amount)
+					.map_err(|_| "locker can't afford to lock the amount requested")?;
+
+			let now = <system::Module<T>>::block_number();
+
+			Self::deposit_event(RawEvent::LockFunds(locker, amount, now));
+			Ok(())
+		}
+
+		/// Unreserves the specified amount of funds from the caller
+		#[weight = 10_000]
+		pub fn unreserve_funds(origin, amount: BalanceOf<T>) -> DispatchResult {
+			let unlocker = ensure_signed(origin)?;
+
+			T::Currency::unreserve(&unlocker, amount);
+			// ReservableCurrency::unreserve does not fail (it will lock up as much as amount)
+
+			let now = <system::Module<T>>::block_number();
+
+			Self::deposit_event(RawEvent::UnlockFunds(unlocker, amount, now));
+			Ok(())
+		}
+
         #[weight = 1000]
-        pub fn create(origin) -> DispatchResult {
-            let sender = ensure_signed(origin)?;
+        pub fn create(origin, amount: BalanceOf<T>) -> DispatchResult {
+            let sender = ensure_signed(origin.clone())?;
 
             let kitty_id = Self::next_kitty_id()?;
 
@@ -97,8 +126,7 @@ decl_module! {
 
             Self::insert_kitty(&sender, kitty_id, kitty)?;
 
-            T::Currency::reserve(&sender, 1_000_000_000_000_000u64.into())
-                .map_err(|_| "locker can't afford to lock the amount requested")?;
+            Self::reserve_funds(origin, amount)?;
 
             Self::deposit_event(RawEvent::Created(sender, kitty_id));
 
