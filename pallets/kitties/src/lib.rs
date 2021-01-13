@@ -3,7 +3,7 @@
 use codec::{Encode, Decode};
 use frame_support::{
     Parameter, RuntimeDebug, StorageDoubleMap, StorageValue, 
-    decl_error, decl_event, decl_module, decl_storage, 
+    decl_error, decl_event, decl_module, decl_storage,  
     dispatch::{ DispatchError, DispatchResult }, ensure, 
     traits::{ Currency, ExistenceRequirement::AllowDeath, ReservableCurrency, Randomness },
 };
@@ -36,6 +36,7 @@ pub trait Trait: frame_system::Trait {
     type KittyIndex: Parameter + AtLeast32BitUnsigned + Bounded + Default + Copy;
     // type Currency: LockableCurrency<Self::AccountId, Moment=Self::BlockNumber>;
     type Currency: Currency<Self::AccountId> + ReservableCurrency<Self::AccountId>;
+
 }
 
 decl_storage! {
@@ -69,7 +70,7 @@ decl_event! {
         LockFunds(AccountId, Balance, BlockNumber),
 		UnlockFunds(AccountId, Balance, BlockNumber),
 		// sender, dest, amount, block number
-		TransferFunds(AccountId, AccountId, Balance, BlockNumber),
+        TransferFunds(AccountId, AccountId, Balance, BlockNumber),
 	}
 }
 
@@ -83,6 +84,8 @@ decl_error! {
         InvalidaKittyId,
         RequireDifferentParent,
         AccountNotExist,
+
+        BalanceNotEnough,
 	}
 }
 
@@ -94,14 +97,17 @@ decl_module! {
 
         #[weight = 0]
 		pub fn reserve_funds(origin, locker: T::AccountId, amount: BalanceOf<T>) -> DispatchResult {
-			let _sender = ensure_signed(origin)?;
+            let _sender = ensure_signed(origin)?;
+            // 账户可用余额
+            let free_amount = T::Currency::free_balance(&locker);
+            ensure!(free_amount > amount, Error::<T>::BalanceNotEnough);
 
-			T::Currency::reserve(&locker, amount)
-					.map_err(|_| "locker can't afford to lock the amount requested")?;
+            T::Currency::reserve(&locker, amount)
+                .map_err(|_| "locker can't afford to lock the amount requested")?;
 
-			let now = <system::Module<T>>::block_number();
-
-			Self::deposit_event(RawEvent::LockFunds(locker, amount, now));
+            let now = <system::Module<T>>::block_number();
+            Self::deposit_event(RawEvent::LockFunds(locker, amount, now));
+			
 			Ok(())
 		}
         

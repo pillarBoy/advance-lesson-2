@@ -32,6 +32,12 @@ fn can_reserve_funds() {
 		assert_eq!(Balances::reserved_balance(&1), 100);
 	});
 }
+#[test]
+fn reserve_funds_failed_not_enough_balance() {
+	new_test_ext().execute_with(|| {
+		assert_noop!(KModule::reserve_funds(Origin::signed(1), 1, 12000), Error::<Test>::BalanceNotEnough);
+	});
+}
 
 #[test]
 fn can_unreserve_and_transfer() {
