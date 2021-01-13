@@ -21,6 +21,13 @@ mod tests;
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct Kitty(pub [u8; 16]);
 
+#[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
+pub struct KittyNode<T: Trait> {
+    _self: T::KittyIndex,
+    companion: Option<(T::KittyIndex, T::KittyIndex)>,
+    children: Vec<T::KittyIndex>,
+}
+
 type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as system::Trait>::AccountId>>::Balance;
 
 pub trait Trait: frame_system::Trait {
@@ -43,6 +50,8 @@ decl_storage! {
         pub AccountKitties get(fn account_kitties): map hasher(blake2_128_concat) T::AccountId => Vec<(T::KittyIndex, Kitty)>;
         // kitty 对应的质押数量
         pub KittyLockAmount get(fn lock_amount): map hasher(blake2_128_concat) T::KittyIndex => Option<BalanceOf<T>>;
+        // kitty 对应关系
+        pub KittyNodeStorage get(fn get_kitty_from_node): Vec<KittyNode<T>>;
 	}
 }
 
@@ -132,7 +141,18 @@ decl_module! {
 
             Self::reserve_funds(origin, sender.clone(), amount)?;
 
-            Self::deposit_event(RawEvent::Created(sender, kitty_id));
+            Self::deposit_event(RawEvent::Created(sender.clone(), kitty_id));
+
+            // 更新kitty node
+            let mut node_vec = KittyNodeStorage::<T>::take();
+            let node = KittyNode {
+                _self: kitty_id,
+                children: Vec::new(),
+                companion: None, // 
+            };
+            node_vec.push(node);
+            // 更新kittynode 关系vec
+            KittyNodeStorage::<T>::put(node_vec);
 
             Ok(())
         }
@@ -178,6 +198,26 @@ decl_module! {
 
             Self::reserve_funds(origin, sender.clone(), amount)?;
 
+            // 更新kitty node children关系
+            let mut node_vec = KittyNodeStorage::<T>::take();
+            for k in &mut node_vec.iter_mut() {
+                if k._self == kitty_id_1 {
+                    k.children.push(new_kitty_id);
+                } else if k._self == kitty_id_2 {
+                    k.children.push(new_kitty_id);
+                }
+            }
+
+            let node = KittyNode {
+                _self: new_kitty_id,
+                children: Vec::new(),
+                companion: Some((kitty_id_1, kitty_id_2)),
+            };
+
+            node_vec.push(node);
+            // 更新kittynode 关系vec
+            KittyNodeStorage::<T>::put(node_vec);
+            
             Self::deposit_event(RawEvent::Created(sender, new_kitty_id));
         }
 	}
