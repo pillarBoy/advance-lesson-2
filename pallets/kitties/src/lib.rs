@@ -80,10 +80,6 @@ decl_event! {
 
 decl_error! {
 	pub enum Error for Module<T: Trait> {
-		KittiesIdOverflow,
-		InvalidKittyId,
-        SameGender,
-
         KittiesCountOverflow,
         InvalidaKittyId,
         RequireDifferentParent,
