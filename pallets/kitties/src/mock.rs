@@ -59,6 +59,8 @@ parameter_types! {
 	// pub const ExistentialDeposit: u64 = 1;
 	pub const TransferFee: u64 = 0;
 	pub const CreationFee: u64 = 0;
+
+	pub const KittyReserveFundsConst: u64 = 10_000_000_000_000;
 }
 
 impl system::Trait for Test {
@@ -117,7 +119,7 @@ impl Trait for Test {
 	type Randomness = MockRandom;
 	type KittyIndex = u32;
 	type Currency = Balances;
-
+	type KittyReserveFunds = u8;
 }
 
 

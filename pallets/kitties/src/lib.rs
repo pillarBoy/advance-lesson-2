@@ -5,6 +5,7 @@ use frame_support::{
     Parameter, RuntimeDebug, StorageDoubleMap, StorageValue, 
     decl_error, decl_event, decl_module, decl_storage,  
     dispatch::{ DispatchError, DispatchResult }, ensure, 
+    traits::Get,
     traits::{ Currency, ExistenceRequirement::AllowDeath, ReservableCurrency, Randomness },
 };
 use sp_io::hashing::{blake2_128};
@@ -12,11 +13,11 @@ use frame_system::{self as system, ensure_signed};
 use sp_runtime::traits::{AtLeast32BitUnsigned, Bounded, One, CheckedAdd};
 use sp_std::prelude::*;
 
-#[cfg(test)]
-mod mock;
+// #[cfg(test)]
+// mod mock;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 #[derive(Encode, Decode, Clone, RuntimeDebug, PartialEq, Eq)]
 pub struct Kitty(pub [u8; 16]);
@@ -38,9 +39,8 @@ pub trait Trait: frame_system::Trait {
 	type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
 	type Randomness: Randomness<Self::Hash>;
     type KittyIndex: Parameter + AtLeast32BitUnsigned + Bounded + Default + Copy;
-    // type Currency: LockableCurrency<Self::AccountId, Moment=Self::BlockNumber>;
     type Currency: Currency<Self::AccountId> + ReservableCurrency<Self::AccountId>;
-
+    type KittyReserveFunds: Get<BalanceOf<Self>>;
 }
 
 decl_storage! {
@@ -130,7 +130,7 @@ decl_module! {
 		}
 
         #[weight = 1000]
-        pub fn create(origin, amount: BalanceOf<T>) -> DispatchResult {
+        pub fn create(origin) -> DispatchResult {
             let sender = ensure_signed(origin.clone())?;
 
             let kitty_id = Self::next_kitty_id()?;
@@ -140,6 +140,8 @@ decl_module! {
             let kitty = Kitty(dna);
 
             Self::insert_kitty(&sender, kitty_id, kitty)?;
+
+            let amount = T::KittyReserveFunds::get();
 
             KittyLockAmount::<T>::insert(kitty_id, amount);
 
@@ -193,8 +195,9 @@ decl_module! {
         }
 
         #[weight = 0]
-        pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex, amount: BalanceOf<T>) {
+        pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex) {
             let sender = ensure_signed(origin.clone())?;
+            let amount = T::KittyReserveFunds::get();
 
             let new_kitty_id = Self::do_breed(&sender, kitty_id_1, kitty_id_2)?;
             // 质押token
